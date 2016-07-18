@@ -135,10 +135,10 @@ def package_scripts(build_root, config_only=False, windows=False):
         os.chmod(os.path.join(build_root, "influxdb.conf"), 0o644)
     else:
         logging.debug("Copying scripts and sample configuration to build directory.")
-        shutil.copyfile(INIT_SCRIPT, os.path.join(build_root, SCRIPT_DIR[1:], INIT_SCRIPT.split('/')[1]))
-        os.chmod(os.path.join(build_root, SCRIPT_DIR[1:], INIT_SCRIPT.split('/')[1]), 0o644)
-        shutil.copyfile(SYSTEMD_SCRIPT, os.path.join(build_root, SCRIPT_DIR[1:], SYSTEMD_SCRIPT.split('/')[1]))
-        os.chmod(os.path.join(build_root, SCRIPT_DIR[1:], SYSTEMD_SCRIPT.split('/')[1]), 0o644)
+        shutil.copyfile(INIT_SCRIPT, os.path.join(build_root, SCRIPT_DIR[1:], INIT_SCRIPT.split('/')[-1:]))
+        os.chmod(os.path.join(build_root, SCRIPT_DIR[1:], INIT_SCRIPT.split('/')[-1:]), 0o644)
+        shutil.copyfile(SYSTEMD_SCRIPT, os.path.join(build_root, SCRIPT_DIR[1:], SYSTEMD_SCRIPT.split('/')[-1:]))
+        os.chmod(os.path.join(build_root, SCRIPT_DIR[1:], SYSTEMD_SCRIPT.split('/')[-1:]), 0o644)
         shutil.copyfile(LOGROTATE_SCRIPT, os.path.join(build_root, LOGROTATE_DIR[1:], "influxdb"))
         os.chmod(os.path.join(build_root, LOGROTATE_DIR[1:], "influxdb"), 0o644)
         shutil.copyfile(DEFAULT_CONFIG, os.path.join(build_root, CONFIG_DIR[1:], "influxdb.conf"))
@@ -707,6 +707,7 @@ def package(build_output, pkg_name, version, nightly=False, iteration=1, static=
                                 if package_type == 'rpm':
                                     # rpm's convert any dashes to underscores
                                     package_version = package_version.replace("-", "_")
+                                    logging.debug("Changing package output version from {} to {} for RPM.".format(version, package_version))
                                 new_outfile = outfile.replace("{}-{}".format(package_version, package_iteration), package_version)
                                 os.rename(outfile, new_outfile)
                                 outfile = new_outfile
@@ -723,12 +724,6 @@ def main(args):
     if args.release and args.nightly:
         logging.error("Cannot be both a nightly and a release.")
         return 1
-
-    if args.nightly:
-        args.version = increment_minor_version(args.version)
-        args.version = "{}~n{}".format(args.version,
-                                       datetime.utcnow().strftime("%Y%m%d%H%M"))
-        args.iteration = 0
 
     # Pre-build checks
     check_environ()
@@ -762,13 +757,26 @@ def main(args):
         if not go_get(args.branch, update=args.update, no_uncommitted=args.no_uncommitted):
             return 1
 
+    if args.version is None:
+        args.version = get_current_version()
+
+    if args.nightly:
+        args.version = increment_minor_version(args.version)
+        args.version = "{}~n{}".format(args.version,
+                                       datetime.utcnow().strftime("%Y%m%d%H%M"))
+        args.iteration = 0
+
     if args.generate:
         if not run_generate():
             return 1
 
     if args.test:
-        if not run_tests(args.race, args.parallel, args.timeout, args.no_vet):
+        if not run_tests(args.test_race, args.parallel, args.timeout, args.no_vet):
             return 1
+
+    if args.no_build:
+        logging.info("'No build' flag specified, exiting.")
+        return 0
 
     platforms = []
     single_build = True
@@ -795,7 +803,7 @@ def main(args):
                          platform=platform,
                          arch=arch,
                          nightly=args.nightly,
-                         race=args.race,
+                         race=args.build_race,
                          clean=args.clean,
                          outdir=od,
                          tags=args.build_tags,
@@ -886,7 +894,6 @@ if __name__ == '__main__':
     parser.add_argument('--version',
                         metavar='<version>',
                         type=str,
-                        default=get_current_version(),
                         help='Version information to apply to build output (ex: 0.12.0)')
     parser.add_argument('--iteration',
                         metavar='<package iteration>',
@@ -951,12 +958,18 @@ if __name__ == '__main__':
     parser.add_argument('--test',
                         action='store_true',
                         help='Run tests (does not produce build output)')
+    parser.add_argument('--no-build',
+                        action='store_true',
+                        help='Exit before building (ie, just run tests).')
     parser.add_argument('--no-vet',
                         action='store_true',
                         help='Do not run "go vet" when running tests')
-    parser.add_argument('--race',
+    parser.add_argument('--build-race',
                         action='store_true',
                         help='Enable race flag for build output')
+    parser.add_argument('--test-race',
+                        action='store_true',
+                        help='Enable race flag for test')
     parser.add_argument('--parallel',
                         metavar='<num threads>',
                         type=int,
